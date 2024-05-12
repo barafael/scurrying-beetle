@@ -18,7 +18,7 @@ use ch32_hal::{
 };
 use display_interface_i2c::I2CInterface;
 use embassy_executor::Spawner;
-use embassy_futures::select::{select, Either, Either3};
+use embassy_futures::select::{select3, Either, Either3};
 use embassy_time::Duration;
 use embedded_graphics::{draw_target::DrawTarget, geometry::Point, pixelcolor::BinaryColor, Drawable, Pixel};
 use ssd1309::{displayrotation::DisplayRotation, mode::GraphicsMode, prelude::DisplaySize, Builder};
@@ -86,6 +86,7 @@ async fn main(_spawner: Spawner) -> ! {
     let mut display_ticker = embassy_time::Ticker::every(Duration::from_millis(50));
     let mut blink_ticker = embassy_time::Ticker::every(Duration::from_millis(500));
     let mut uart_ticker = embassy_time::Ticker::every(Duration::from_millis(1000));
+
     let mut receive_buffer = [0u8; 16];
     let (mut tx, mut rx) = uart.split();
 
@@ -95,13 +96,8 @@ async fn main(_spawner: Spawner) -> ! {
     let mut wanderer = Wanderer::new(x, y, target.0, target.1);
 
     loop {
-        match select(
-            display_ticker.next(),
-            blink_ticker.next(), /*rx.read(&mut receive_buffer)*/
-        )
-        .await
-        {
-            Either::First(()) => match wanderer.next() {
+        match select3(display_ticker.next(), blink_ticker.next(), rx.read(&mut receive_buffer)).await {
+            Either3::First(()) => match wanderer.next() {
                 Some((x, y)) => {
                     draw(&mut display, x, y).unwrap();
                     display.flush().unwrap();
@@ -113,9 +109,10 @@ async fn main(_spawner: Spawner) -> ! {
                     wanderer = Wanderer::new(x, y, target.0, target.1);
                 }
             },
-            Either::Second(()) => {
+            Either3::Second(()) => {
                 led.toggle();
             }
+            Either3::Third(r) => {}
         }
     }
 }
