@@ -2,43 +2,53 @@
 #![no_main]
 #![feature(type_alias_impl_trait)]
 
-include!("../embeetle_32x32.rs");
+include!("../beetle_map.rs");
 
 use ch32_hal::{
-    adc,
+    adc, bind_interrupts,
     debug::SDIPrint,
     delay::Delay,
     dma::NoDma,
-    gpio::{self, AnyPin, Level, Output, Pin},
+    gpio::{self, Level, Output},
     i2c::{self, I2c},
+    peripherals::USART1,
+    println,
     time::Hertz,
+    usart::{self, InterruptHandler, Uart},
 };
 use display_interface_i2c::I2CInterface;
 use embassy_executor::Spawner;
-use embassy_time::Timer;
+use embassy_futures::select::{select, Either, Either3};
+use embassy_time::Duration;
 use embedded_graphics::{draw_target::DrawTarget, geometry::Point, pixelcolor::BinaryColor, Drawable, Pixel};
-use itertools::Itertools;
 use ssd1309::{displayrotation::DisplayRotation, mode::GraphicsMode, prelude::DisplaySize, Builder};
 use wanderer::Wanderer;
 use wyrand::WyRand;
 
 mod wanderer;
 
+bind_interrupts!(
+    struct Irqs {
+        USART1 => InterruptHandler<USART1>;
+    }
+);
+
 #[embassy_executor::main(entry = "ch32_hal::entry")]
-async fn main(spawner: Spawner) -> ! {
+async fn main(_spawner: Spawner) -> ! {
     SDIPrint::enable();
 
     let p = ch32_hal::init(ch32_hal::Config::default());
     ch32_hal::embassy::init();
 
-    spawner.spawn(blink(p.PD0.degrade(), 500)).unwrap();
+    let uart_config = usart::Config::default();
+    let uart = Uart::new(p.USART1, p.PC1, p.PC0, Irqs, p.DMA1_CH4, p.DMA1_CH5, uart_config).unwrap();
 
-    let sda1 = p.PC1;
-    let scl1 = p.PC2;
+    let sda1 = p.PC6;
+    let scl1 = p.PC5;
 
     let mut rst1 = Output::new(p.PC3, Level::Low, gpio::Speed::default());
 
-    let i2c1 = I2c::new::<0>(
+    let i2c1 = I2c::new::<2>(
         p.I2C1,
         scl1,
         sda1,
@@ -62,7 +72,7 @@ async fn main(spawner: Spawner) -> ! {
     rst1.set_high();
     Delay.delay_ms(10);
 
-    display.init().expect("Display connected?");
+    display.init().unwrap();
 
     let seed = {
         let mut adc = ch32_hal::adc::Adc::new(p.ADC1, adc::Config::default());
@@ -71,31 +81,53 @@ async fn main(spawner: Spawner) -> ! {
     };
     let mut rng = WyRand::new(u64::from(seed));
 
-    let mut target;
+    let mut led = Output::new(p.PD0, Level::Low, Default::default());
+
+    let mut display_ticker = embassy_time::Ticker::every(Duration::from_millis(50));
+    let mut blink_ticker = embassy_time::Ticker::every(Duration::from_millis(500));
+    let mut uart_ticker = embassy_time::Ticker::every(Duration::from_millis(1000));
+    let mut receive_buffer = [0u8; 16];
+    let (mut tx, mut rx) = uart.split();
+
+    let mut target = random_target(&mut rng);
     let mut x = 16;
     let mut y = 16;
+    let mut wanderer = Wanderer::new(x, y, target.0, target.1);
+
     loop {
-        target = random_target(&mut rng);
-        let wanderer = Wanderer::new(x, y, target.0, target.1);
-        for (x, y) in wanderer {
-            draw(&mut display, x, y).unwrap();
-            display.flush().unwrap();
-            // Delay.delay_ms(5);
-            display.clear();
-            embassy_futures::yield_now().await;
+        match select(
+            display_ticker.next(),
+            blink_ticker.next(), /*rx.read(&mut receive_buffer)*/
+        )
+        .await
+        {
+            Either::First(()) => match wanderer.next() {
+                Some((x, y)) => {
+                    draw(&mut display, x, y).unwrap();
+                    display.flush().unwrap();
+                    display.clear();
+                }
+                None => {
+                    (x, y) = target;
+                    target = random_target(&mut rng);
+                    wanderer = Wanderer::new(x, y, target.0, target.1);
+                }
+            },
+            Either::Second(()) => {
+                led.toggle();
+            }
         }
-        (x, y) = target;
     }
 }
 
 fn random_target(rng: &mut WyRand) -> (i32, i32) {
-    let width = 128 - BEETLE[0].len();
-    let height = 64 - BEETLE.len();
+    let width = 128 - 32;
+    let height = 64 - 32;
     let x = rng.rand() % width as u64;
     let y = rng.rand() % height as u64;
 
-    let x = x + BEETLE[0].len() as u64 / 2u64;
-    let y = y + BEETLE.len() as u64 / 2u64;
+    let x = x + 16;
+    let y = y + 16;
 
     (x as i32, y as i32)
 }
@@ -107,29 +139,14 @@ where
 {
     let offset_x = offset_x - 16;
     let offset_y = offset_y - 16;
-    for (x, y) in (0..BEETLE.len()).cartesian_product(0..BEETLE[0].len()) {
-        if BEETLE[y][x] == 1 {
-            Pixel(Point::new(offset_x + x as i32, offset_y + y as i32), BinaryColor::On).draw(display)?;
-        }
+    for (x, y) in BEETLE_MAP {
+        Pixel(Point::new(offset_x + x as i32, offset_y + y as i32), BinaryColor::On).draw(display)?;
     }
     Ok(())
 }
 
-#[embassy_executor::task(pool_size = 1)]
-async fn blink(pin: AnyPin, interval_ms: u64) {
-    let mut led = Output::new(pin, Level::Low, Default::default());
-
-    loop {
-        led.set_high();
-        Timer::after_millis(interval_ms).await;
-        led.set_low();
-        Timer::after_millis(interval_ms).await;
-    }
-}
-
 #[panic_handler]
-fn panic(info: &core::panic::PanicInfo) -> ! {
+fn panic(_info: &core::panic::PanicInfo) -> ! {
     // println!("\n\n\n{}", info);
-
     loop {}
 }
