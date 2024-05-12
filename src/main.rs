@@ -9,11 +9,13 @@ use ch32_hal::{
     debug::SDIPrint,
     delay::Delay,
     dma::NoDma,
-    gpio::{self, Level, Output},
+    gpio::{self, AnyPin, Level, Output, Pin},
     i2c::{self, I2c},
     time::Hertz,
 };
 use display_interface_i2c::I2CInterface;
+use embassy_executor::Spawner;
+use embassy_time::Timer;
 use embedded_graphics::{draw_target::DrawTarget, geometry::Point, pixelcolor::BinaryColor, Drawable, Pixel};
 use itertools::Itertools;
 use ssd1309::{displayrotation::DisplayRotation, mode::GraphicsMode, prelude::DisplaySize, Builder};
@@ -22,11 +24,14 @@ use wyrand::WyRand;
 
 mod wanderer;
 
-#[ch32_hal::entry]
-fn main() -> ! {
+#[embassy_executor::main(entry = "ch32_hal::entry")]
+async fn main(spawner: Spawner) -> ! {
     SDIPrint::enable();
 
     let p = ch32_hal::init(ch32_hal::Config::default());
+    ch32_hal::embassy::init();
+
+    spawner.spawn(blink(p.PD0.degrade(), 500)).unwrap();
 
     let sda1 = p.PC1;
     let scl1 = p.PC2;
@@ -77,6 +82,7 @@ fn main() -> ! {
             display.flush().unwrap();
             // Delay.delay_ms(5);
             display.clear();
+            embassy_futures::yield_now().await;
         }
         (x, y) = target;
     }
@@ -107,6 +113,18 @@ where
         }
     }
     Ok(())
+}
+
+#[embassy_executor::task(pool_size = 1)]
+async fn blink(pin: AnyPin, interval_ms: u64) {
+    let mut led = Output::new(pin, Level::Low, Default::default());
+
+    loop {
+        led.set_high();
+        Timer::after_millis(interval_ms).await;
+        led.set_low();
+        Timer::after_millis(interval_ms).await;
+    }
 }
 
 #[panic_handler]

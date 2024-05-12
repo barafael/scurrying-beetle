@@ -10,6 +10,16 @@ ch32-hal = { git = "https://github.com/barafael/ch32-hal", features = [
     "time-driver-tim2",
 ] }
 
+embassy-executor = { version = "0.5.0", features = [
+    "nightly",
+    "integrated-timers",
+    "arch-riscv32",
+    "executor-thread",
+    # "task-arena-size-512", or nightly
+] }
+embassy-time = { version = "0.3.0" }
+embassy-futures = "0.1.1"
+
 itertools = { version = "0.12.1", default-features = false }
 
 embedded-hal = "1.0.0"
