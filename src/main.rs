@@ -11,7 +11,6 @@ use ch32_hal::{
     dma::NoDma,
     gpio::{self, Level, Output},
     i2c::{self, I2c},
-    println,
     time::Hertz,
 };
 use display_interface_i2c::I2CInterface;
@@ -112,7 +111,7 @@ where
 
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
-    println!("\n\n\n{}", info);
+    // println!("\n\n\n{}", info);
 
     loop {}
 }
