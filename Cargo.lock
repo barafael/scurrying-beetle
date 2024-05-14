@@ -35,7 +35,7 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 [[package]]
 name = "ch32-hal"
 version = "0.1.0"
-source = "git+https://github.com/barafael/ch32-hal#63c9364e53a52b0d9e98db2ec2258b227687deb8"
+source = "git+https://github.com/ch32-rs/ch32-hal#01d6564b0bf0cf05ecc8baabea4b245c0089dd5a"
 dependencies = [
  "ch32-metapac",
  "critical-section",
@@ -551,6 +551,7 @@ dependencies = [
  "embassy-time",
  "embedded-graphics",
  "embedded-hal 1.0.0",
+ "qingke-rt",
  "ssd1309",
  "wyrand",
 ]

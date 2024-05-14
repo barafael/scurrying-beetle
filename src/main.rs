@@ -33,7 +33,7 @@ bind_interrupts!(
     }
 );
 
-#[embassy_executor::main(entry = "ch32_hal::entry")]
+#[embassy_executor::main(entry = "qingke_rt::entry")]
 async fn main(_spawner: Spawner) -> ! {
     SDIPrint::enable();
 
